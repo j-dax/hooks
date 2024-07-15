@@ -1,0 +1,59 @@
+#!/bin/bash
+# To enable this hook, rename this file to "pre-commit".
+# Configure the max file size by using the following
+# git config --global hooks.maxfilebytes 50M
+
+# Default to the file size that git starts warning about
+# https://docs.github.com/en/repositories/working-with-files/managing-large-files/about-large-files-on-github
+maxfilebytes=$(git config --type=int hooks.maxfilebytes)
+if [ -z $maxfilebytes ]; then
+	maxfilebytes=$((50 * 1024 * 1024)) # 50 MiB
+fi
+
+# Redirect output to stderr.
+exec 1>&2
+
+# translate string to bold font
+bold_string () {
+	echo -e "\e[1m$1\e[0m"
+}
+
+# print a number with IEC formatting up to tebibyte
+prettify_number () {
+	num=$1
+	postfix=("" "Ki" "Mi", "Gi", "Ti")
+	index=0
+	# select the right IEC unit
+	while (($num>=1024)); do
+		num=$(($num/1024))
+		index=$(($index+1))
+	done
+	# grab the right postfix and remove the trailing comma
+	postfix=$(echo ${postfix[$index]} | awk '{gsub(/,/, ""); print}')
+	echo "${num}${postfix}B"
+}
+
+# enforce file size is at most $maxfilebytes
+require_max_file_size () {
+	# only consider (A)dded or (M)odified
+	files_committed=$(git diff --staged --name-only --diff-filter=AM)
+
+	large_files=()
+	for file in $files_committed; do
+		size=$(wc --bytes $file | awk '{gsub(/ .+/, ""); print}')
+		if (( $size > $maxfilebytes )); then
+			large_files+=($file)
+			git rm --cached $file 1>/dev/null
+			echo $file $(prettify_number $size)
+		fi
+	done
+
+	if (( ${#large_files[@]} > 0 )); then
+		echo "Removed ${#large_files[@]} file(s) from commit"
+		echo "Aborting commit"
+		exit 1
+	fi
+}
+require_max_file_size
+
+exit 0
